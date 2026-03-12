@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+
+from core.verdicts import V7, Verdict
+from core.envelope import make_envelope
+from core.cli import read_stdin_if_needed
+from core.render import render
+
+MODULE = "7vel"
+VERSION = "0.2"
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="LucentGhost 7VEL verdict engine (LUCENT-C / JSON / PY output)"
+    )
+    parser.add_argument("verdict", help="yes/no/maybe/likely/not_likely/unable/empty")
+    parser.add_argument(
+        "reason",
+        nargs="?",
+        default="",
+        help='Reason text, or "-" to read stdin (recommended for piping)',
+    )
+    parser.add_argument(
+        "--basis",
+        default="evidence",
+        help="evidence | inference | assumption | none",
+    )
+    parser.add_argument(
+        "--out",
+        default="json",
+        choices=["json", "lucent", "py", "all"],
+        help="Output format: json (default), lucent (human), py (Python literal), all (3-in-1)",
+    )
+    parser.add_argument(
+        "--compact",
+        action="store_true",
+        help="Compact output (best for piping). Affects json/py; lucent remains readable.",
+    )
+    args = parser.parse_args()
+
+    vmap = {
+        "yes": V7.YES,
+        "no": V7.NO,
+        "maybe": V7.MAYBE,
+        "likely": V7.LIKELY,
+        "not_likely": V7.NOT_LIKELY,
+        "unable": V7.UNABLE_TO_DETERMINE,
+        "empty": V7.EMPTY_SET,
+    }
+
+    key = args.verdict.lower()
+    reason = read_stdin_if_needed(args.reason) if args.reason == "-" else args.reason
+
+    if key not in vmap:
+        ver = Verdict(V7.NO, "Invalid verdict type", "evidence")
+        env = make_envelope(
+            module=MODULE,
+            version=VERSION,
+            verdict=ver.to_dict(),
+            payload={"error": "invalid_verdict", "given": args.verdict},
+            trace=[f"input_verdict={args.verdict!r}"],
+        )
+        _print_env(env, args.out, args.compact)
+        return 1
+
+    ver = Verdict(vmap[key], reason, args.basis)
+    env = make_envelope(
+        module=MODULE,
+        version=VERSION,
+        verdict=ver.to_dict(),
+        payload={"input": {"verdict": key, "reason": reason, "basis": args.basis}},
+        trace=[f"parsed_verdict={key}", f"basis={args.basis}"],
+    )
+
+    _print_env(env, args.out, args.compact)
+    return 0
+
+def _print_env(env, out_mode: str, compact: bool) -> None:
+    if out_mode == "all":
+        # deterministic order: LUCENT-C -> JSON -> PY
+        print(render(env, "lucent", compact=compact))
+        print(render(env, "json", compact=compact))
+        print(render(env, "py", compact=compact))
+    else:
+        print(render(env, out_mode, compact=compact))
+
+if __name__ == "__main__":
+    raise SystemExit(main())
